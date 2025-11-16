@@ -1,0 +1,6 @@
+@ParthBE_HostAddress = http://localhost:5167
+
+GET {{ParthBE_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
