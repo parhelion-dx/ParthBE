@@ -182,9 +182,9 @@ dotnet run
 ```
 
 Приложение будет доступно по адресу:
-- **HTTP**: http://localhost:5000
-- **HTTPS**: https://localhost:5001
-- **Swagger UI**: https://localhost:5001/swagger
+- **HTTP**: http://localhost:1337
+- **HTTPS**: https://localhost:1338
+- **Swagger UI**: https://localhost:1338/swagger
 
 ---
 

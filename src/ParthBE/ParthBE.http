@@ -1,4 +1,4 @@
-@ParthBE_HostAddress = http://localhost:5167
+@ParthBE_HostAddress = http://localhost:1337
 
 GET {{ParthBE_HostAddress}}/weatherforecast/
 Accept: application/json
