@@ -54,29 +54,52 @@ app.Run();
 
 async Task InitializeDatabaseAsync(ParthBEDbContext context)
 {
-    if (await context.Users.AnyAsync()) return;
-
-    // Создание ролей
-    var roles = new[] { "student", "staff", "admin" }
-        .Select(name => new Role { Name = name });
-    
-    await context.Roles.AddRangeAsync(roles);
-    await context.SaveChangesAsync();
-
-    // Создание администратора
-    var admin = new User
+    // Use a transaction to avoid race conditions
+    using (var transaction = await context.Database.BeginTransactionAsync())
     {
-        FullName = "System Administrator",
-        Email = "admin@university.com",
-        PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
-        CreatedAt = DateTime.UtcNow
-    };
-    
-    await context.Users.AddAsync(admin);
-    await context.SaveChangesAsync();
+        // Check if any users exist after acquiring the transaction
+        if (await context.Users.AnyAsync())
+        {
+            await transaction.RollbackAsync();
+            return;
+        }
 
-    // Назначение роли администратора
-    var adminRole = await context.Roles.FirstAsync(r => r.Name == "admin");
-    await context.UserRoles.AddAsync(new UserRole { UserId = admin.Id, RoleId = adminRole.Id });
-    await context.SaveChangesAsync();
+        // Создание ролей (upsert logic)
+        var roleNames = new[] { "student", "staff", "admin" };
+        foreach (var roleName in roleNames)
+        {
+            if (!await context.Roles.AnyAsync(r => r.Name == roleName))
+            {
+                await context.Roles.AddAsync(new Role { Name = roleName });
+            }
+        }
+        await context.SaveChangesAsync();
+
+        // Создание администратора (upsert logic)
+        var adminEmail = "admin@university.com";
+        var admin = await context.Users.FirstOrDefaultAsync(u => u.Email == adminEmail);
+        if (admin == null)
+        {
+            admin = new User
+            {
+                FullName = "System Administrator",
+                Email = adminEmail,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
+                CreatedAt = DateTime.UtcNow
+            };
+            await context.Users.AddAsync(admin);
+            await context.SaveChangesAsync();
+        }
+
+        // Назначение роли администратора (upsert logic)
+        var adminRole = await context.Roles.FirstAsync(r => r.Name == "admin");
+        var hasAdminRole = await context.UserRoles.AnyAsync(ur => ur.UserId == admin.Id && ur.RoleId == adminRole.Id);
+        if (!hasAdminRole)
+        {
+            await context.UserRoles.AddAsync(new UserRole { UserId = admin.Id, RoleId = adminRole.Id });
+            await context.SaveChangesAsync();
+        }
+
+        await transaction.CommitAsync();
+    }
 }
