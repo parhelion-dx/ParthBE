@@ -1,15 +1,28 @@
+using ParthBE.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
-namespace ParthBE.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class HelloController : ControllerBase
+namespace ParthBE.Controllers
 {
-    // GET /api/Hello
-    [HttpGet]
-    public IActionResult Get()
+    public class HomeController : Controller
     {
-        return Ok("Our backend is running");
+        private readonly ParthBEDbContext _context;
+
+        public HomeController(ParthBEDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<IActionResult> Index()
+        {
+            var userCount = await _context.Users.CountAsync();
+            ViewData["UserCount"] = userCount;
+            return View();
+        }
+
+        public IActionResult Privacy()
+        {
+            return View();
+        }
     }
 }
