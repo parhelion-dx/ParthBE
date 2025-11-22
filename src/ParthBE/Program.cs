@@ -30,7 +30,7 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
 // Инициализация базы данных
-using (var scope = app.Services.CreateScope())
+await using(var scope = app.Services.CreateAsyncScope())
 {
     var services = scope.ServiceProvider;
     try
