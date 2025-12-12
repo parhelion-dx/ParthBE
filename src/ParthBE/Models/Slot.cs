@@ -7,11 +7,11 @@ namespace Backend.Models
         public string CreatedByStaffId { get; set; } = string.Empty;
         public DateTime StartTime { get; set; }
         public DateTime EndTime { get; set; }
-        public string Status { get; set; } = "available"; // available, booked
+        public string Status { get; set; } = "available"; // available, expired
 
         // Навигационные свойства
         public Equipment Equipment { get; set; } = null!;
         public User CreatedByStaff { get; set; } = null!;
-        public Booking? Booking { get; set; }
+        public ICollection<Booking> Bookings { get; set; } = new List<Booking>();
     }
 }

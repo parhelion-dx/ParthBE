@@ -23,6 +23,13 @@ namespace Backend.Controllers
             _notificationService = notificationService;
         }
 
+        // Нормализация времени к 15-минутным интервалам
+        private DateTime NormalizeTime(DateTime time)
+        {
+            var minutes = (time.Minute / 15) * 15;
+            return new DateTime(time.Year, time.Month, time.Day, time.Hour, minutes, 0, DateTimeKind.Utc);
+        }
+
         [HttpGet("my-bookings")]
         [Authorize(Roles = "Student")]
         public async Task<ActionResult<List<BookingDto>>> GetMyBookings()
@@ -45,6 +52,8 @@ namespace Backend.Controllers
                     StudentUserId = b.StudentUserId,
                     StudentName = b.StudentUser.FullName,
                     StudentEmail = b.StudentUser.Email!,
+                    StartTime = b.StartTime,
+                    EndTime = b.EndTime,
                     Status = b.Status,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,
@@ -68,34 +77,57 @@ namespace Backend.Controllers
         }
 
         [HttpPost]
-        [Authorize(Roles = "Student")]
+        [Authorize(Roles = "Student,Admin")]
         public async Task<ActionResult<BookingDto>> CreateBooking(CreateBookingDto dto)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
+            // Нормализуем время к 15-минутным интервалам
+            var startTime = NormalizeTime(dto.StartTime);
+            var endTime = NormalizeTime(dto.EndTime);
+
+            if (startTime >= endTime)
+                return BadRequest("Время начала должно быть раньше времени окончания");
+
+            if ((endTime - startTime).TotalMinutes < 15)
+                return BadRequest("Минимальная длительность бронирования - 15 минут");
+
             var slot = await _context.Slots
-                .Include(s => s.Booking)
+                .Include(s => s.Bookings)
                 .FirstOrDefaultAsync(s => s.Id == dto.SlotId);
 
             if (slot == null)
-                return NotFound("Slot not found");
+                return NotFound("Слот не найден");
 
             if (slot.Status != "available")
-                return BadRequest("Slot is not available");
+                return BadRequest("Слот недоступен");
 
-            if (slot.Booking != null)
-                return BadRequest("Slot already booked");
+            // Проверяем что время бронирования внутри слота
+            if (startTime < slot.StartTime || endTime > slot.EndTime)
+                return BadRequest("Время бронирования должно быть в пределах слота");
+
+            // Проверяем пересечение с существующими активными бронированиями
+            var activeStatuses = new[] { "pending_approval", "confirmed" };
+            var hasOverlap = slot.Bookings
+                .Where(b => activeStatuses.Contains(b.Status))
+                .Any(b =>
+                    (startTime >= b.StartTime && startTime < b.EndTime) ||
+                    (endTime > b.StartTime && endTime <= b.EndTime) ||
+                    (startTime <= b.StartTime && endTime >= b.EndTime));
+
+            if (hasOverlap)
+                return BadRequest("Выбранное время пересекается с существующим бронированием");
 
             var booking = new Booking
             {
                 SlotId = dto.SlotId,
                 StudentUserId = userId!,
+                StartTime = startTime,
+                EndTime = endTime,
                 Status = "pending_approval",
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
-
-            slot.Status = "booked";
 
             _context.Bookings.Add(booking);
             await _context.SaveChangesAsync();
@@ -106,14 +138,25 @@ namespace Backend.Controllers
         }
 
         [HttpPut("{id}/status")]
-        [Authorize(Roles = "Staff")]
+        [Authorize(Roles = "Staff,Admin")]
         public async Task<ActionResult<BookingDto>> UpdateBookingStatus(int id, UpdateBookingStatusDto dto)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isAdmin = User.IsInRole("Admin");
 
-            var booking = await _context.Bookings
+            var query = _context.Bookings
                 .Include(b => b.Slot)
-                .FirstOrDefaultAsync(b => b.Id == id && b.Slot.CreatedByStaffId == userId);
+                .AsQueryable();
+
+            Booking? booking;
+            if (isAdmin)
+            {
+                booking = await query.FirstOrDefaultAsync(b => b.Id == id);
+            }
+            else
+            {
+                booking = await query.FirstOrDefaultAsync(b => b.Id == id && b.Slot.CreatedByStaffId == userId);
+            }
 
             if (booking == null)
                 return NotFound();
@@ -123,7 +166,6 @@ namespace Backend.Controllers
 
             if (dto.Status == "cancelled_by_staff")
             {
-                booking.Slot.Status = "available";
                 await _notificationService.NotifyBookingCancelled(booking, "staff");
             }
             else if (dto.Status == "confirmed")
@@ -154,7 +196,6 @@ namespace Backend.Controllers
 
             booking.Status = "cancelled_by_student";
             booking.UpdatedAt = DateTime.UtcNow;
-            booking.Slot.Status = "available";
 
             await _context.SaveChangesAsync();
 
@@ -178,6 +219,8 @@ namespace Backend.Controllers
                     StudentUserId = b.StudentUserId,
                     StudentName = b.StudentUser.FullName,
                     StudentEmail = b.StudentUser.Email!,
+                    StartTime = b.StartTime,
+                    EndTime = b.EndTime,
                     Status = b.Status,
                     CreatedAt = b.CreatedAt,
                     UpdatedAt = b.UpdatedAt,

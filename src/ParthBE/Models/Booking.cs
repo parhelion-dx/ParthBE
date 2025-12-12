@@ -5,6 +5,8 @@ namespace Backend.Models
         public int Id { get; set; }
         public int SlotId { get; set; }
         public string StudentUserId { get; set; } = string.Empty;
+        public DateTime StartTime { get; set; }  // Время начала бронирования (внутри слота)
+        public DateTime EndTime { get; set; }    // Время окончания бронирования (внутри слота)
         public string Status { get; set; } = "pending_approval"; // pending_approval, confirmed, cancelled_by_staff, cancelled_by_student
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

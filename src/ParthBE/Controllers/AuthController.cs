@@ -130,5 +130,54 @@ namespace Backend.Controllers
 
             return Ok(userDtos);
         }
+
+        [HttpGet("staff")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult> GetStaffUsers()
+        {
+            var users = _userManager.Users.ToList();
+            var staffUsers = new List<object>();
+
+            foreach (var user in users)
+            {
+                var roles = await _userManager.GetRolesAsync(user);
+                if (roles.Contains("Staff"))
+                {
+                    staffUsers.Add(new
+                    {
+                        user.Id,
+                        user.Email,
+                        user.FullName,
+                        Roles = roles
+                    });
+                }
+            }
+
+            return Ok(staffUsers);
+        }
+
+        [HttpGet("me")]
+        [Authorize]
+        public async Task<ActionResult> GetCurrentUser()
+        {
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (userId == null)
+                return Unauthorized();
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+                return NotFound();
+
+            var roles = await _userManager.GetRolesAsync(user);
+
+            return Ok(new
+            {
+                user.Id,
+                user.Email,
+                user.FullName,
+                user.ProfileInfo,
+                Roles = roles
+            });
+        }
     }
 }

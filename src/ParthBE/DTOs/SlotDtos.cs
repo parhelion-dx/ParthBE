@@ -7,6 +7,14 @@ namespace Backend.DTOs
         public DateTime EndTime { get; set; }
     }
 
+    // Создание слотов сразу для нескольких единиц оборудования
+    public class CreateBulkSlotsDto
+    {
+        public List<int> EquipmentIds { get; set; } = new();
+        public DateTime StartTime { get; set; }
+        public DateTime EndTime { get; set; }
+    }
+
     public class SlotDto
     {
         public int Id { get; set; }
@@ -19,6 +27,7 @@ namespace Backend.DTOs
         public DateTime StartTime { get; set; }
         public DateTime EndTime { get; set; }
         public string Status { get; set; } = string.Empty;
-        public BookingDto? Booking { get; set; }
+        // Теперь слот может иметь несколько бронирований
+        public List<BookingDto> Bookings { get; set; } = new();
     }
 }

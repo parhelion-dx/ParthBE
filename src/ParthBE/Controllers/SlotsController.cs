@@ -20,48 +20,26 @@ namespace Backend.Controllers
             _context = context;
         }
 
+        // Нормализация времени к 15-минутным интервалам (округление вниз)
+        private DateTime NormalizeTime(DateTime time)
+        {
+            var minutes = (time.Minute / 15) * 15;
+            return new DateTime(time.Year, time.Month, time.Day, time.Hour, minutes, 0, DateTimeKind.Utc);
+        }
+
         [HttpGet("available")]
         public async Task<ActionResult<List<SlotDto>>> GetAvailableSlots()
         {
-            var slots = await _context.Slots
-                .Include(s => s.Equipment)
-                .ThenInclude(e => e.Type)
-                .Include(s => s.Equipment.Location)
-                .Include(s => s.CreatedByStaff)
-                .Where(s => s.Status == "available" && s.StartTime > DateTime.UtcNow)
-                .OrderBy(s => s.StartTime)
-                .Select(s => new SlotDto
-                {
-                    Id = s.Id,
-                    EquipmentId = s.EquipmentId,
-                    EquipmentTypeName = s.Equipment.Type.Name,
-                    InventoryNumber = s.Equipment.InventoryNumber,
-                    LocationName = s.Equipment.Location.Name,
-                    CreatedByStaffId = s.CreatedByStaffId,
-                    CreatedByStaffName = s.CreatedByStaff.FullName,
-                    StartTime = s.StartTime,
-                    EndTime = s.EndTime,
-                    Status = s.Status
-                })
-                .ToListAsync();
-
-            return Ok(slots);
-        }
-
-        [HttpGet("my-slots")]
-        [Authorize(Roles = "Staff")]
-        public async Task<ActionResult<List<SlotDto>>> GetMySlots()
-        {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var now = DateTime.UtcNow;
 
             var slots = await _context.Slots
                 .Include(s => s.Equipment)
                 .ThenInclude(e => e.Type)
                 .Include(s => s.Equipment.Location)
                 .Include(s => s.CreatedByStaff)
-                .Include(s => s.Booking)
-                .ThenInclude(b => b!.StudentUser)
-                .Where(s => s.CreatedByStaffId == userId)
+                .Include(s => s.Bookings)
+                .ThenInclude(b => b.StudentUser)
+                .Where(s => s.Status == "available" && s.EndTime > now)
                 .OrderBy(s => s.StartTime)
                 .Select(s => new SlotDto
                 {
@@ -75,17 +53,76 @@ namespace Backend.Controllers
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
                     Status = s.Status,
-                    Booking = s.Booking != null ? new BookingDto
+                    Bookings = s.Bookings
+                        .Where(b => b.Status == "pending_approval" || b.Status == "confirmed")
+                        .Select(b => new BookingDto
+                        {
+                            Id = b.Id,
+                            SlotId = b.SlotId,
+                            StudentUserId = b.StudentUserId,
+                            StudentName = b.StudentUser.FullName,
+                            StudentEmail = b.StudentUser.Email!,
+                            StartTime = b.StartTime,
+                            EndTime = b.EndTime,
+                            Status = b.Status,
+                            CreatedAt = b.CreatedAt,
+                            UpdatedAt = b.UpdatedAt
+                        }).ToList()
+                })
+                .ToListAsync();
+
+            return Ok(slots);
+        }
+
+        [HttpGet("my-slots")]
+        [Authorize(Roles = "Staff,Admin")]
+        public async Task<ActionResult<List<SlotDto>>> GetMySlots()
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isAdmin = User.IsInRole("Admin");
+            var now = DateTime.UtcNow;
+
+            var query = _context.Slots
+                .Include(s => s.Equipment)
+                .ThenInclude(e => e.Type)
+                .Include(s => s.Equipment.Location)
+                .Include(s => s.CreatedByStaff)
+                .Include(s => s.Bookings)
+                .ThenInclude(b => b.StudentUser)
+                .AsQueryable();
+
+            if (!isAdmin)
+            {
+                query = query.Where(s => s.CreatedByStaffId == userId);
+            }
+
+            var slots = await query
+                .OrderBy(s => s.StartTime)
+                .Select(s => new SlotDto
+                {
+                    Id = s.Id,
+                    EquipmentId = s.EquipmentId,
+                    EquipmentTypeName = s.Equipment.Type.Name,
+                    InventoryNumber = s.Equipment.InventoryNumber,
+                    LocationName = s.Equipment.Location.Name,
+                    CreatedByStaffId = s.CreatedByStaffId,
+                    CreatedByStaffName = s.CreatedByStaff.FullName,
+                    StartTime = s.StartTime,
+                    EndTime = s.EndTime,
+                    Status = s.EndTime < now && s.Status == "available" ? "expired" : s.Status,
+                    Bookings = s.Bookings.Select(b => new BookingDto
                     {
-                        Id = s.Booking.Id,
-                        SlotId = s.Booking.SlotId,
-                        StudentUserId = s.Booking.StudentUserId,
-                        StudentName = s.Booking.StudentUser.FullName,
-                        StudentEmail = s.Booking.StudentUser.Email!,
-                        Status = s.Booking.Status,
-                        CreatedAt = s.Booking.CreatedAt,
-                        UpdatedAt = s.Booking.UpdatedAt
-                    } : null
+                        Id = b.Id,
+                        SlotId = b.SlotId,
+                        StudentUserId = b.StudentUserId,
+                        StudentName = b.StudentUser.FullName,
+                        StudentEmail = b.StudentUser.Email!,
+                        StartTime = b.StartTime,
+                        EndTime = b.EndTime,
+                        Status = b.Status,
+                        CreatedAt = b.CreatedAt,
+                        UpdatedAt = b.UpdatedAt
+                    }).ToList()
                 })
                 .ToListAsync();
 
@@ -93,31 +130,44 @@ namespace Backend.Controllers
         }
 
         [HttpPost]
-        [Authorize(Roles = "Staff")]
+        [Authorize(Roles = "Staff,Admin")]
         public async Task<ActionResult<SlotDto>> CreateSlot(CreateSlotDto dto)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isAdmin = User.IsInRole("Admin");
 
-            var equipment = await _context.Equipment
-                .FirstOrDefaultAsync(e => e.Id == dto.EquipmentId && e.AssignedStaffId == userId);
+            var startTime = NormalizeTime(dto.StartTime);
+            var endTime = NormalizeTime(dto.EndTime);
+
+            if (startTime >= endTime)
+                return BadRequest("Время начала должно быть раньше времени окончания");
+
+            if ((endTime - startTime).TotalMinutes < 15)
+                return BadRequest("Минимальная длительность слота - 15 минут");
+
+            var equipment = isAdmin
+                ? await _context.Equipment.FirstOrDefaultAsync(e => e.Id == dto.EquipmentId)
+                : await _context.Equipment.FirstOrDefaultAsync(e => e.Id == dto.EquipmentId && e.AssignedStaffId == userId);
 
             if (equipment == null)
-                return BadRequest("Equipment not assigned to you");
+                return BadRequest("Оборудование не найдено или не назначено вам");
 
             var hasConflict = await _context.Slots
                 .AnyAsync(s => s.EquipmentId == dto.EquipmentId &&
-                    ((dto.StartTime >= s.StartTime && dto.StartTime < s.EndTime) ||
-                     (dto.EndTime > s.StartTime && dto.EndTime <= s.EndTime)));
+                    s.Status == "available" &&
+                    ((startTime >= s.StartTime && startTime < s.EndTime) ||
+                     (endTime > s.StartTime && endTime <= s.EndTime) ||
+                     (startTime <= s.StartTime && endTime >= s.EndTime)));
 
             if (hasConflict)
-                return BadRequest("Time slot conflict");
+                return BadRequest("Конфликт времени с существующим слотом");
 
             var slot = new Slot
             {
                 EquipmentId = dto.EquipmentId,
                 CreatedByStaffId = userId!,
-                StartTime = dto.StartTime,
-                EndTime = dto.EndTime,
+                StartTime = startTime,
+                EndTime = endTime,
                 Status = "available"
             };
 
@@ -127,21 +177,105 @@ namespace Backend.Controllers
             return CreatedAtAction(nameof(GetAvailableSlots), await GetSlotDto(slot.Id));
         }
 
+        [HttpPost("bulk")]
+        [Authorize(Roles = "Staff,Admin")]
+        public async Task<ActionResult<List<SlotDto>>> CreateBulkSlots(CreateBulkSlotsDto dto)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isAdmin = User.IsInRole("Admin");
+
+            if (dto.EquipmentIds == null || dto.EquipmentIds.Count == 0)
+                return BadRequest("Не выбрано ни одной единицы оборудования");
+
+            var startTime = NormalizeTime(dto.StartTime);
+            var endTime = NormalizeTime(dto.EndTime);
+
+            if (startTime >= endTime)
+                return BadRequest("Время начала должно быть раньше времени окончания");
+
+            if ((endTime - startTime).TotalMinutes < 15)
+                return BadRequest("Минимальная длительность слота - 15 минут");
+
+            var equipmentQuery = _context.Equipment.Where(e => dto.EquipmentIds.Contains(e.Id));
+            if (!isAdmin)
+            {
+                equipmentQuery = equipmentQuery.Where(e => e.AssignedStaffId == userId);
+            }
+            var validEquipmentIds = await equipmentQuery.Select(e => e.Id).ToListAsync();
+
+            if (validEquipmentIds.Count == 0)
+                return BadRequest("Не найдено оборудования, которое назначено вам");
+
+            var conflictingEquipmentIds = await _context.Slots
+                .Where(s => validEquipmentIds.Contains(s.EquipmentId) &&
+                    s.Status == "available" &&
+                    ((startTime >= s.StartTime && startTime < s.EndTime) ||
+                     (endTime > s.StartTime && endTime <= s.EndTime) ||
+                     (startTime <= s.StartTime && endTime >= s.EndTime)))
+                .Select(s => s.EquipmentId)
+                .Distinct()
+                .ToListAsync();
+
+            var equipmentIdsToCreate = validEquipmentIds.Except(conflictingEquipmentIds).ToList();
+
+            if (equipmentIdsToCreate.Count == 0)
+                return BadRequest("Для всего выбранного оборудования есть конфликты времени");
+
+            var slots = equipmentIdsToCreate.Select(equipmentId => new Slot
+            {
+                EquipmentId = equipmentId,
+                CreatedByStaffId = userId!,
+                StartTime = startTime,
+                EndTime = endTime,
+                Status = "available"
+            }).ToList();
+
+            _context.Slots.AddRange(slots);
+            await _context.SaveChangesAsync();
+
+            var createdSlotIds = slots.Select(s => s.Id).ToList();
+            var result = await _context.Slots
+                .Include(s => s.Equipment)
+                .ThenInclude(e => e.Type)
+                .Include(s => s.Equipment.Location)
+                .Include(s => s.CreatedByStaff)
+                .Where(s => createdSlotIds.Contains(s.Id))
+                .Select(s => new SlotDto
+                {
+                    Id = s.Id,
+                    EquipmentId = s.EquipmentId,
+                    EquipmentTypeName = s.Equipment.Type.Name,
+                    InventoryNumber = s.Equipment.InventoryNumber,
+                    LocationName = s.Equipment.Location.Name,
+                    CreatedByStaffId = s.CreatedByStaffId,
+                    CreatedByStaffName = s.CreatedByStaff.FullName,
+                    StartTime = s.StartTime,
+                    EndTime = s.EndTime,
+                    Status = s.Status,
+                    Bookings = new List<BookingDto>()
+                })
+                .ToListAsync();
+
+            return Ok(result);
+        }
+
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Staff")]
+        [Authorize(Roles = "Staff,Admin")]
         public async Task<ActionResult> DeleteSlot(int id)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isAdmin = User.IsInRole("Admin");
 
-            var slot = await _context.Slots
-                .Include(s => s.Booking)
-                .FirstOrDefaultAsync(s => s.Id == id && s.CreatedByStaffId == userId);
+            var slot = isAdmin
+                ? await _context.Slots.Include(s => s.Bookings).FirstOrDefaultAsync(s => s.Id == id)
+                : await _context.Slots.Include(s => s.Bookings).FirstOrDefaultAsync(s => s.Id == id && s.CreatedByStaffId == userId);
 
             if (slot == null)
                 return NotFound();
 
-            if (slot.Booking != null)
-                return BadRequest("Cannot delete booked slot. Cancel booking first.");
+            var hasActiveBookings = slot.Bookings.Any(b => b.Status == "pending_approval" || b.Status == "confirmed");
+            if (hasActiveBookings)
+                return BadRequest("Невозможно удалить слот с активными бронированиями");
 
             _context.Slots.Remove(slot);
             await _context.SaveChangesAsync();
@@ -156,6 +290,8 @@ namespace Backend.Controllers
                 .ThenInclude(e => e.Type)
                 .Include(s => s.Equipment.Location)
                 .Include(s => s.CreatedByStaff)
+                .Include(s => s.Bookings)
+                .ThenInclude(b => b.StudentUser)
                 .Where(s => s.Id == id)
                 .Select(s => new SlotDto
                 {
@@ -168,7 +304,20 @@ namespace Backend.Controllers
                     CreatedByStaffName = s.CreatedByStaff.FullName,
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
-                    Status = s.Status
+                    Status = s.Status,
+                    Bookings = s.Bookings.Select(b => new BookingDto
+                    {
+                        Id = b.Id,
+                        SlotId = b.SlotId,
+                        StudentUserId = b.StudentUserId,
+                        StudentName = b.StudentUser.FullName,
+                        StudentEmail = b.StudentUser.Email!,
+                        StartTime = b.StartTime,
+                        EndTime = b.EndTime,
+                        Status = b.Status,
+                        CreatedAt = b.CreatedAt,
+                        UpdatedAt = b.UpdatedAt
+                    }).ToList()
                 })
                 .FirstAsync();
         }
