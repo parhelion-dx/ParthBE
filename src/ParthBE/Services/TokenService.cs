@@ -22,7 +22,7 @@ namespace Backend.Services
         public async Task<string> GenerateAccessToken(User user)
         {
             var roles = await _userManager.GetRolesAsync(user);
-
+            
             var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id),

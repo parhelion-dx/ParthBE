@@ -3,9 +3,9 @@ namespace Backend.DTOs
     public class CreateEquipmentDto
     {
         public int TypeId { get; set; }
-        public string InventoryNumber { get; set; } = string.Empty;
+        // InventoryNumber убран - генерируется автоматически
         public int LocationId { get; set; }
-        public string? AssignedStaffId { get; set; }
+        public string AssignedStaffId { get; set; } = string.Empty; // Обязательное поле
     }
 
     public class EquipmentDto
@@ -17,8 +17,8 @@ namespace Backend.DTOs
         public string InventoryNumber { get; set; } = string.Empty;
         public int LocationId { get; set; }
         public string LocationName { get; set; } = string.Empty;
-        public string? AssignedStaffId { get; set; }
-        public string? AssignedStaffName { get; set; }
+        public string AssignedStaffId { get; set; } = string.Empty;
+        public string AssignedStaffName { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
     }
 

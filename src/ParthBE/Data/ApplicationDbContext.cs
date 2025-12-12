@@ -38,7 +38,7 @@ namespace Backend.Data
             {
                 entity.Property(e => e.FullName).IsRequired();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
-
+                
                 entity.Property(e => e.Email).HasColumnName("email");
                 entity.Property(e => e.UserName).HasColumnName("user_name");
                 entity.Property(e => e.PasswordHash).HasColumnName("password_hash");
@@ -95,7 +95,7 @@ namespace Backend.Data
                 entity.Property(e => e.TypeId).HasColumnName("type_id");
                 entity.Property(e => e.InventoryNumber).HasColumnName("inventory_number").IsRequired();
                 entity.Property(e => e.LocationId).HasColumnName("location_id");
-                entity.Property(e => e.AssignedStaffId).HasColumnName("assigned_staff_id");
+                entity.Property(e => e.AssignedStaffId).HasColumnName("assigned_staff_id").IsRequired();
                 entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("available");
 
                 entity.HasIndex(e => e.InventoryNumber).IsUnique();
@@ -113,7 +113,7 @@ namespace Backend.Data
                 entity.HasOne(e => e.AssignedStaff)
                     .WithMany(u => u.AssignedEquipment)
                     .HasForeignKey(e => e.AssignedStaffId)
-                    .OnDelete(DeleteBehavior.SetNull);
+                    .OnDelete(DeleteBehavior.Restrict); // Нельзя удалить преподавателя с назначенным оборудованием
             });
 
             // Настройка Slot
@@ -139,6 +139,12 @@ namespace Backend.Data
                     .WithMany(u => u.CreatedSlots)
                     .HasForeignKey(e => e.CreatedByStaffId)
                     .OnDelete(DeleteBehavior.Restrict);
+
+                // One-to-Many: Slot -> Bookings
+                entity.HasMany(e => e.Bookings)
+                    .WithOne(b => b.Slot)
+                    .HasForeignKey(b => b.SlotId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             // Настройка Booking
@@ -149,16 +155,13 @@ namespace Backend.Data
                 entity.Property(e => e.Id).HasColumnName("id");
                 entity.Property(e => e.SlotId).HasColumnName("slot_id");
                 entity.Property(e => e.StudentUserId).HasColumnName("student_user_id");
+                entity.Property(e => e.StartTime).HasColumnName("start_time");
+                entity.Property(e => e.EndTime).HasColumnName("end_time");
                 entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("pending_approval");
                 entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
 
-                entity.HasIndex(e => e.SlotId).IsUnique();
-
-                entity.HasOne(e => e.Slot)
-                    .WithOne(s => s.Booking)
-                    .HasForeignKey<Booking>(e => e.SlotId)
-                    .OnDelete(DeleteBehavior.Cascade);
+                // Убран unique index на SlotId - теперь один слот может иметь несколько бронирований
 
                 entity.HasOne(e => e.StudentUser)
                     .WithMany(u => u.Bookings)
